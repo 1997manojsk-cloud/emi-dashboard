@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EMI Payment Dashboard</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo } = React;
+
+        const EMIDashboard = () => {
+            const getDefaultLoans = () => ({
+                loan1: { principal: 0, rate: 0, tenureMonths: 12, startMonth: 0, name: 'Loan 1', fixedEMI: null },
+                loan2: { principal: 0, rate: 0, tenureMonths: 12, startMonth: 0, name: 'Loan 2', fixedEMI: null },
+                loan3: { principal: 0, rate: 0, tenureMonths: 12, startMonth: 0, name: 'Loan 3', fixedEMI: null },
+                loan4: { principal: 0, rate: 0, tenureMonths: 12, startMonth: 0, name: 'Loan 4', fixedEMI: null }
+            });
+
+            const [activeTab, setActiveTab] = useState('edit');
+            
+            // Load saved data from localStorage on first load
+            const [salary, setSalary] = useState(() => {
+                const saved = localStorage.getItem('emi-salary');
+                return saved ? parseFloat(saved) : 0;
+            });
+            
+            const [loans, setLoans] = useState(() => {
+                const saved = localStorage.getItem('emi-loans');
+                if (saved) {
+                    try {
+                        return JSON.parse(saved);
+                    } catch (e) {
+                        console.error('Error loading saved data:', e);
+                    }
+                }
+                return getDefaultLoans();
+            });
+
+            // Save to localStorage whenever loans change
+            React.useEffect(() => {
+                localStorage.setItem('emi-loans', JSON.stringify(loans));
+            }, [loans]);
+
+            // Save to localStorage whenever salary changes
+            React.useEffect(() => {
+                localStorage.setItem('emi-salary', salary.toString());
+            }, [salary]);
+
+            const months = useMemo(() => {
+                const result = [];
+                const start = new Date(2025, 11, 1);
+                const maxEndMonth = Math.max(...Object.values(loans).map(loan => 
+                    loan.startMonth + loan.tenureMonths
+                ));
+                
+                for (let i = 0; i < maxEndMonth; i++) {
+                    const current = new Date(start);
+                    current.setMonth(current.getMonth() + i);
+                    result.push({
+                        date: new Date(current),
+                        label: current.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+                    });
+                }
+                return result;
+            }, [loans]);
+
+            const calculateEMI = (loan) => {
+                if (loan.fixedEMI && loan.fixedEMI > 0) return loan.fixedEMI;
+                const { principal, rate, tenureMonths } = loan;
+                if (rate === 0) return principal / tenureMonths;
+                const monthlyRate = rate / 12 / 100;
+                const emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / 
+                            (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+                return emi;
+            };
+
+            const getPaymentForMonth = (loan, monthIndex) => {
+                if (monthIndex < loan.startMonth) return 0;
+                const paymentMonth = monthIndex - loan.startMonth;
+                if (paymentMonth >= loan.tenureMonths) return 0;
+                return calculateEMI(loan);
+            };
+
+            const updateLoan = (loanKey, field, value) => {
+                const newValue = field === 'fixedEMI' ? (value === '' ? null : parseFloat(value)) : 
+                                 field === 'name' ? value : (parseFloat(value) || 0);
+                setLoans(prev => {
+                    if (prev[loanKey][field] === newValue) return prev;
+                    return {
+                        ...prev,
+                        [loanKey]: { ...prev[loanKey], [field]: newValue }
+                    };
+                });
+            };
+
+            const addNewLoan = () => {
+                const existingCount = Object.keys(loans).length;
+                const newKey = `loan_${Date.now()}`;
+                setLoans(prev => ({
+                    ...prev,
+                    [newKey]: {
+                        principal: 0,
+                        rate: 0,
+                        tenureMonths: 12,
+                        startMonth: 0,
+                        name: `New Loan ${existingCount + 1}`,
+                        fixedEMI: null
+                    }
+                }));
+            };
+
+            const deleteLoan = (loanKey) => {
+                if (window.confirm('Are you sure you want to delete this loan?')) {
+                    setLoans(prev => {
+                        const newLoans = { ...prev };
+                        delete newLoans[loanKey];
+                        return newLoans;
+                    });
+                }
+            };
+
+            const resetAllData = () => {
+                if (window.confirm('Are you sure you want to reset ALL data? This will erase all your loans and start fresh with empty rows.')) {
+                    localStorage.removeItem('emi-loans');
+                    localStorage.removeItem('emi-salary');
+                    setLoans(getDefaultLoans());
+                    setSalary(0);
+                }
+            };
+
+            const formatCurrency = (amount) => {
+                return new Intl.NumberFormat('en-IN', {
+                    style: 'currency',
+                    currency: 'INR',
+                    maximumFractionDigits: 0
+                }).format(amount);
+            };
+
+            const EditAllLoans = () => {
+                const handleInputChange = (loanKey, field, value) => {
+                    updateLoan(loanKey, field, value);
+                };
+
+                const getTotalPaymentAllLoans = () => {
+                    return Object.values(loans).reduce((sum, loan) => {
+                        return sum + (calculateEMI(loan) * loan.tenureMonths);
+                    }, 0);
+                };
+
+                const getEndDate = (loan) => {
+                    const startDate = new Date(2025, 11, 1);
+                    startDate.setMonth(startDate.getMonth() + loan.startMonth + loan.tenureMonths);
+                    return startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                };
+
+                return (
+                    <div className="space-y-6">
+                        <div className="bg-white rounded-lg shadow-xl p-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                                    📝 Edit All Loans - Quick Access
+                                </h2>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={addNewLoan}
+                                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-lg transition-all">
+                                        <span className="text-xl">+</span> Add New
+                                    </button>
+                                    <button
+                                        onClick={resetAllData}
+                                        className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-bold shadow-lg transition-all">
+                                        🔄 Reset All
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div className="mb-6 p-4 bg-green-50 rounded-lg border-2 border-green-300">
+                                <label className="block text-sm font-bold text-gray-800 mb-2">Monthly Salary (₹) - Enter Your Salary</label>
+                                <input
+                                    type="number"
+                                    defaultValue={salary}
+                                    placeholder="Enter your monthly salary..."
+                                    onBlur={(e) => setSalary(parseFloat(e.target.value) || 0)}
+                                    onKeyPress={(e) => {
+                                        if (e.key === 'Enter') {
+                                            setSalary(parseFloat(e.target.value) || 0);
+                                            e.target.blur();
+                                        }
+                                    }}
+                                    className="w-full md:w-80 px-4 py-3 text-xl font-bold border-2 border-green-400 rounded-lg focus:ring-2 focus:ring-green-600"
+                                />
+                            </div>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full border-collapse">
+                                    <thead>
+                                        <tr className="bg-blue-600 text-white">
+                                            <th className="p-3 text-left border">✏️ Loan Name (Click to Edit)</th>
+                                            <th className="p-3 text-right border">Principal (₹)</th>
+                                            <th className="p-3 text-right border">Rate (%)</th>
+                                            <th className="p-3 text-right border">Tenure (M)</th>
+                                            <th className="p-3 text-right border">Start (0=Dec'25)</th>
+                                            <th className="p-3 text-right border">Fixed EMI (₹)</th>
+                                            <th className="p-3 text-right border bg-blue-700">Monthly EMI</th>
+                                            <th className="p-3 text-right border bg-blue-700">Total Payment</th>
+                                            <th className="p-3 text-center border bg-red-600">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.entries(loans).map(([key, loan], idx) => (
+                                            <tr key={key} className={idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                                <td className="p-2 border">
+                                                    <input type="text" defaultValue={loan.name}
+                                                        onBlur={(e) => handleInputChange(key, 'name', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'name', e.target.value), e.target.blur())}
+                                                        placeholder="Enter loan name..."
+                                                        className="w-full px-3 py-2 border-2 border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-bold text-gray-800 bg-purple-50"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border">
+                                                    <input type="number" defaultValue={loan.principal}
+                                                        onBlur={(e) => handleInputChange(key, 'principal', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'principal', e.target.value), e.target.blur())}
+                                                        className="w-full px-2 py-2 border-2 border-blue-200 rounded focus:ring-2 focus:ring-blue-500 text-right"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border">
+                                                    <input type="number" step="0.1" defaultValue={loan.rate}
+                                                        onBlur={(e) => handleInputChange(key, 'rate', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'rate', e.target.value), e.target.blur())}
+                                                        className="w-full px-2 py-2 border-2 border-blue-200 rounded focus:ring-2 focus:ring-blue-500 text-right"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border">
+                                                    <input type="number" defaultValue={loan.tenureMonths}
+                                                        onBlur={(e) => handleInputChange(key, 'tenureMonths', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'tenureMonths', e.target.value), e.target.blur())}
+                                                        className="w-full px-2 py-2 border-2 border-blue-200 rounded focus:ring-2 focus:ring-blue-500 text-right"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border">
+                                                    <input type="number" defaultValue={loan.startMonth}
+                                                        onBlur={(e) => handleInputChange(key, 'startMonth', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'startMonth', e.target.value), e.target.blur())}
+                                                        className="w-full px-2 py-2 border-2 border-blue-200 rounded focus:ring-2 focus:ring-blue-500 text-right"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border">
+                                                    <input type="number" defaultValue={loan.fixedEMI || ''} placeholder="Auto"
+                                                        onBlur={(e) => handleInputChange(key, 'fixedEMI', e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && (handleInputChange(key, 'fixedEMI', e.target.value), e.target.blur())}
+                                                        className="w-full px-2 py-2 border-2 border-green-200 rounded focus:ring-2 focus:ring-green-500 text-right"
+                                                    />
+                                                </td>
+                                                <td className="p-2 border bg-blue-50 text-right font-bold text-blue-800">
+                                                    {formatCurrency(calculateEMI(loan))}
+                                                </td>
+                                                <td className="p-2 border bg-purple-50 text-right font-bold text-purple-800">
+                                                    {formatCurrency(calculateEMI(loan) * loan.tenureMonths)}
+                                                </td>
+                                                <td className="p-2 border text-center">
+                                                    <button
+                                                        onClick={() => deleteLoan(key)}
+                                                        className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 font-bold"
+                                                        title="Delete this loan">
+                                                        🗑️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg shadow-xl p-6 border-2 border-purple-300">
+                            <h3 className="text-2xl font-bold text-purple-900 mb-4">💰 Loan Summary - Total EMIs Till Clearance</h3>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                                {Object.entries(loans).map(([key, loan]) => (
+                                    <div key={key} className="bg-white p-4 rounded-lg shadow-md border-l-4 border-purple-500">
+                                        <h4 className="font-bold text-gray-800 mb-2">{loan.name}</h4>
+                                        <div className="text-sm text-gray-600 mb-1">
+                                            <span className="font-semibold">Monthly EMI:</span> {formatCurrency(calculateEMI(loan))}
+                                        </div>
+                                        <div className="text-sm text-gray-600 mb-1">
+                                            <span className="font-semibold">Duration:</span> {loan.tenureMonths} months
+                                        </div>
+                                        <div className="text-sm text-gray-600 mb-1">
+                                            <span className="font-semibold">Ends:</span> {getEndDate(loan)}
+                                        </div>
+                                        <div className="text-lg font-bold text-purple-700 mt-2 pt-2 border-t">
+                                            Total: {formatCurrency(calculateEMI(loan) * loan.tenureMonths)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-lg shadow-lg">
+                                <div className="flex items-center justify-between flex-wrap gap-4">
+                                    <div>
+                                        <div className="text-sm opacity-90">GRAND TOTAL - ALL LOANS</div>
+                                        <div className="text-4xl font-bold mt-1">{formatCurrency(getTotalPaymentAllLoans())}</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-sm opacity-90">Total Income (Till Loans End)</div>
+                                        <div className="text-2xl font-bold">{formatCurrency(salary * months.length)}</div>
+                                        <div className="text-sm mt-1">
+                                            Net Savings: {formatCurrency((salary * months.length) - getTotalPaymentAllLoans())}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+                    <div className="max-w-7xl mx-auto">
+                        <div className="bg-white rounded-lg shadow-xl p-6 mb-6">
+                            <h1 className="text-3xl font-bold text-gray-800 mb-2">EMI Payment Dashboard</h1>
+                            <p className="text-gray-600 mb-3">Track and manage all your loans from Dec 2025 till clearance</p>
+                            <div className="flex flex-col gap-2">
+                                <div className="p-2 bg-green-50 rounded border-l-4 border-green-500">
+                                    <p className="text-sm text-green-800">💾 <strong>Auto-Save Enabled:</strong> All your changes are automatically saved in your browser!</p>
+                                </div>
+                                <div className="p-2 bg-blue-50 rounded border-l-4 border-blue-500">
+                                    <p className="text-sm text-blue-800">📝 <strong>Getting Started:</strong> Start fresh! Enter your monthly salary and fill in the 4 empty loan rows below. Click "+ Add New" to add more loans.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 mb-6">
+                            <button
+                                onClick={() => setActiveTab('edit')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                                    activeTab === 'edit' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-gray-100'
+                                }`}>
+                                📝 Edit All Loans
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('timeline')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                                    activeTab === 'timeline' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-gray-100'
+                                }`}>
+                                📅 Payment Timeline
+                            </button>
+                        </div>
+
+                        {activeTab === 'edit' && <EditAllLoans />}
+
+                        {activeTab === 'timeline' && (
+                            <div className="bg-white rounded-lg shadow-xl p-6 overflow-x-auto">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4">Payment Timeline</h2>
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b-2 border-gray-300">
+                                            <th className="text-left p-2 sticky left-0 bg-white z-10">Month</th>
+                                            {Object.values(loans).map(loan => (
+                                                <th key={loan.name} className="text-right p-2 min-w-[100px] text-xs">{loan.name}</th>
+                                            ))}
+                                            <th className="text-right p-2 bg-blue-50 font-bold min-w-[120px]">Total EMI</th>
+                                            <th className="text-right p-2 bg-green-50 font-bold min-w-[120px]">Remaining</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {months.map((month, idx) => {
+                                            const monthlyPayments = Object.values(loans).map(loan => getPaymentForMonth(loan, idx));
+                                            const total = monthlyPayments.reduce((sum, val) => sum + val, 0);
+                                            const remaining = salary - total;
+                                            
+                                            return (
+                                                <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="p-2 font-medium sticky left-0 bg-white">{month.label}</td>
+                                                    {monthlyPayments.map((payment, pidx) => (
+                                                        <td key={pidx} className="text-right p-2">
+                                                            {payment > 0 ? (
+                                                                <span className="text-gray-700">{formatCurrency(payment)}</span>
+                                                            ) : (
+                                                                <span className="text-gray-300">-</span>
+                                                            )}
+                                                        </td>
+                                                    ))}
+                                                    <td className="text-right p-2 bg-blue-50 font-bold">
+                                                        {total > 0 ? formatCurrency(total) : '-'}
+                                                    </td>
+                                                    <td className={`text-right p-2 font-bold ${remaining >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                                        {formatCurrency(remaining)}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        <tr className="border-t-2 border-gray-300 bg-blue-100 font-bold">
+                                            <td className="p-2 sticky left-0 bg-blue-100">TOTAL PAID</td>
+                                            {Object.values(loans).map((loan, idx) => {
+                                                const totalPaid = months.reduce((sum, month, midx) => 
+                                                    sum + getPaymentForMonth(loan, midx), 0
+                                                );
+                                                return (
+                                                    <td key={idx} className="text-right p-2">
+                                                        {formatCurrency(totalPaid)}
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="text-right p-2 bg-blue-200">
+                                                {formatCurrency(
+                                                    Object.values(loans).reduce((sum, loan) => 
+                                                        sum + months.reduce((s, m, midx) => s + getPaymentForMonth(loan, midx), 0), 0
+                                                    )
+                                                )}
+                                            </td>
+                                            <td className="text-right p-2 bg-green-200">
+                                                Total Income: {formatCurrency(salary * months.length)}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<EMIDashboard />);
+    </script>
+</body>
+</html>
